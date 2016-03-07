@@ -1,0 +1,53 @@
+#!/bin/bash
+#
+# Filename: sysmon-common
+# Version: Alpha01
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  Common Varibles and Settings
+#
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+SYSMON_HOME="/opt/sysmon";
+
+source $SYSMON_HOME/lib/sysmon-common-functions
+
+# - User Set Varibles -
+# ---------------------
+
+# Number of days before a host record becomes stale
+DATE_DAY_BUFFER=7;
+
+# Custom address range to include in NMAP scans
+NMAP_CUSTOM_RANGE="";
+
+# Custom print settings for shell output
+SQLITE_DEFAULT_PRINT_ARGS="-init $SYSMON_HOME/data/sysmon-default-header.sql";
+SQLITE_HOST_PRINT_ARGS="-init $SYSMON_HOME/data/sysmon-host-header.sql";
+
+# WMI Event Window
+WMI_EVENT_WINDOW_MINS=45;
+WMI_EVENT_WINDOW=$(echo `date -d "$EVENT_WINDOW_MINS minutes ago" +"%Y%m%d%H%M%S"`".000000-000");
+
+# ---------------------
+
+DATESTAMP=`date +%s`;
+DATE_BUFFER=$( expr $DATE_DAY_BUFFER \* 86400 );
+
+SQLITE=`which sqlite`;
+SQLITE_DB="$SYSMON_HOME/data/master.db";
+
+NMAP=`which nmap`;
+NMAP_ARGS="-T5 -R -O -oG";
+NMAP_RPT="/tmp/sysmon-scan.tmp";
+
+LOCAL_LAN_STR=`/sbin/ifconfig eth0 | head -n 2 | sed 'N;s/\n/ /;N;s/\n/ /' | awk '{print $7 " " $9}' | sed -e 's/addr://g' -e 's/Mask://g'`;
+LOCAL_LAN_ARRAY=($LOCAL_LAN_STR);
+
+LOCAL_IP=${LOCAL_LAN_ARRAY[0]};
+LOCAL_MASK=${LOCAL_LAN_ARRAY[1]};
+LOCAL_MASK_CIDR=$(subnet-to-cidr $LOCAL_MASK);
+LOCAL_NETWORK=$(get-network-address $LOCAL_IP $LOCAL_MASK);

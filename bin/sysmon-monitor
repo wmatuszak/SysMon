@@ -1,0 +1,117 @@
+#!/bin/bash
+#
+# Filename: sysmon-monitor
+# Version: Alpha01
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  System Monitoring Module
+#
+# This module is a system monitoring script that applies probes to monitored hosts and
+# generates reporting and alert data.
+#
+
+SCRIPT_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )";
+
+source "$SCRIPT_HOME/../lib/sysmon-common";
+
+# Query database for monitored hosts
+SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT HostID FROM tblHost WHERE HostMonitor=1"`;
+MONITORED_HOST_LIST=($SQL_RESULT);
+
+# Iterate through monitored host list
+for CURRENT_HOST in "${MONITORED_HOST_LIST[@]}"
+do
+    # Gather data on current host
+    CUR_HOSTNAME=`$SQLITE $SQLITE_DB "SELECT HostName FROM tblHost WHERE HostID=$CURRENT_HOST"`;
+    CUR_HOSTIP=`$SQLITE $SQLITE_DB "SELECT HostIP FROM tblHost WHERE HostID=$CURRENT_HOST"`;
+    CUR_HOST_USER=`$SQLITE $SQLITE_DB "SELECT CredUser FROM tblCred WHERE CredID=(SELECT CredID FROM tblHost WHERE HostID=$CURRENT_HOST)"`;
+    CUR_HOST_PASS=`$SQLITE $SQLITE_DB "SELECT CredPass FROM tblCred WHERE CredID=(SELECT CredID FROM tblHost WHERE HostID=$CURRENT_HOST)"`;
+
+    # Query for list of probes associated with host
+    SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT ProbeID FROM tblPayload WHERE HostID=$CURRENT_HOST"`;
+    CURRENT_PROBES=($SQL_RESULT);
+    for CURRENT_PROBE in "${CURRENT_PROBES[@]}"
+    do
+        # Gather data on current probe to be executed
+        CUR_PROBE_CMD=`$SQLITE $SQLITE_DB "SELECT ProbeCmd FROM tblProbe WHERE ProbeID=$CURRENT_PROBE"`;
+        CUR_PROBE_POST=`$SQLITE $SQLITE_DB "SELECT ProbePost FROM tblProbe WHERE ProbeID=$CURRENT_PROBE"`;
+        CUR_PROBE_EVAL=`$SQLITE $SQLITE_DB "SELECT ProbeEval FROM tblProbe WHERE ProbeID=$CURRENT_PROBE"`;
+        CUR_PROBE_CONST=`$SQLITE $SQLITE_DB "SELECT ProbeConst FROM tblProbe WHERE ProbeID=$CURRENT_PROBE"`;
+        CUR_PROBE_ALERT=`$SQLITE $SQLITE_DB "SELECT ProbeAlert FROM tblProbe WHERE ProbeID=$CURRENT_PROBE"`;
+
+        # Prepare initial probe command (replace inline placeholders)
+        CUR_PROBE_CMD=${CUR_PROBE_CMD/'%H'/$CUR_HOSTNAME};
+        CUR_PROBE_CMD=${CUR_PROBE_CMD/'%U'/$CUR_HOST_USER};
+        CUR_PROBE_CMD=${CUR_PROBE_CMD/'%P'/$CUR_HOST_PASS};
+        CUR_PROBE_CMD=${CUR_PROBE_CMD/'%W_EW'/$WMI_EVENT_WINDOW};
+
+        # Execute probe command
+        /bin/bash -c "$CUR_PROBE_CMD" 2> /tmp/probe_err.tmp > /tmp/probe.tmp;
+        # Check for error in probe
+        if [ -s /tmp/probe_err.tmp ]
+        then
+            # Flag the host in the database for a probe error
+            CUR_PROBE_EVAL="ERR";
+            CUR_PROBE_RESULT="<Probe>";
+            CUR_PROBE_ALERT="[Probe Error: ProbeID #$CURRENT_PROBE]";
+        else
+            # Apply post-processing command
+            CUR_PROBE_RESULT=`cat /tmp/probe.tmp | /bin/bash -c "$CUR_PROBE_POST"`;
+        fi
+        # Cleanup temp files
+        rm /tmp/probe.tmp;
+        rm /tmp/probe_err.tmp;
+
+        # Iterate through probe result
+        CUR_PROBE_DATA=($CUR_PROBE_RESULT);
+        for CUR_PROBE_VALUE in "${CUR_PROBE_DATA[@]}"
+        do
+            echo "$CUR_HOSTNAME: $CUR_PROBE_VALUE [$CUR_PROBE_EVAL] $CUR_PROBE_CONST > $CUR_PROBE_ALERT";
+            # Query for current host alert status concatenate it to current alert (multiple alerts)
+            HOST_ALERT=`$SQLITE $SQLITE_DB "SELECT HostAlert from tblHost WHERE HostID='$CURRENT_HOST';"`;
+            if [[ "$HOST_ALERT" != *"$CUR_PROBE_ALERT"*  ]]
+            then
+                NEW_PROBE_ALERT="$HOST_ALERT$CUR_PROBE_ALERT";
+                CUR_PROBE_ALERT="$NEW_PROBE_ALERT";
+            fi
+            # Evaluate equals
+            if [ "$CUR_PROBE_EVAL" == "EQ"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" == "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate not equals
+            elif [ "$CUR_PROBE_EVAL" == "NE"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" != "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate contains
+            elif [ "$CUR_PROBE_EVAL" == "CO"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" == *"$CUR_PROBE_CONST"* ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate not contains
+            elif [ "$CUR_PROBE_EVAL" == "NC"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" != *"$CUR_PROBE_CONST"* ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate greater than
+            elif [ "$CUR_PROBE_EVAL" == "GT"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" -gt "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate greater than or equal
+            elif [ "$CUR_PROBE_EVAL" == "GE"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" -ge "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate less than
+            elif [ "$CUR_PROBE_EVAL" == "LT"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" -lt "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            # Evaluate less than or equal
+            elif [ "$CUR_PROBE_EVAL" == "LE"  ];
+            then
+                if [ "$CUR_PROBE_VALUE" -le "$CUR_PROBE_CONST" ]; then $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST"; fi;
+            elif [ "$CUR_PROBE_EVAL" == "ERR"  ];
+            then
+                $SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=4, HostAlert='$CUR_PROBE_ALERT' WHERE HostID=$CURRENT_HOST";
+            fi
+        done
+    done
+done

@@ -1,0 +1,28 @@
+#!/bin/bash
+#
+# Filename: sysmon-env
+# Version: Alpha01
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  SysMon Environment Check
+#
+
+# Check for system logger
+LOGGER=`which logger`;
+
+if [[ -z $LOGGER ]]; then exit; fi;
+
+# Set Environment Varibles
+export SYSMON_HOME="/opt/sysmon";
+
+# Check Prerequisite Programs
+if [[ -z `which sqlite` ]]; then $LOGGER "ERROR: sqlite not found!"; fi; 
+if [[ -z `which nmap` ]]; then $LOGGER "ERROR: nmap not found"; fi;
+if [[ -z `which postfix` ]]; then $LOGGER "ERROR: postfix not found"; fi;
+if [[ -z `which sendemail` ]]; then $LOGGER "ERROR: sendemail not found"; fi;
+if [[ -z `which ssh` ]]; then $LOGGER "ERROR: ssh not found"; fi;
+if [[ -z `which wmic` ]]; then $LOGGER "ERROR: wmic not found"; fi;
+
+export SYSMON_ENV_CHECK=1;

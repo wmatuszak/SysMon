@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Filename: sysmon-scanner
+# Version: Alpha02
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  Scanner Module
+#
+# This module is a network scanning script that (using NMAP) gathers data about all visible
+# network devices and logs it into a SQLite database.
+#
+
+SCRIPT_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )";
+
+source "$SCRIPT_HOME/../lib/sysmon-common";
+
+## NMAP Discovery Scan of Entire Network
+$NMAP $NMAP_ARGS $NMAP_RPT $LOCAL_NETWORK/$LOCAL_MASK_CIDR > /dev/null;
+
+## NMAP Custom Scan of Monitored Devices In Database
+SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT HostIP FROM tblHost WHERE HostMonitor=1 AND HostName=''; SELECT HostName FROM tblHost WHERE HostMonitor=1 AND HostName!='';"`;
+echo $SQL_RESULT | $NMAP $NMAP_ARGS $NMAP_RPT.monitor -iL - > /dev/null;
+cat $NMAP_RPT.monitor >> $NMAP_RPT;
+rm $NMAP_RPT.monitor;
+
+## NMAP Custom Scan of Address Range
+$NMAP $NMAP_ARGS $NMAP_RPT.custom > /dev/null;
+cat $NMAP_RPT.custom >> $NMAP_RPT;
+rm $NMAP_RPT.custom;
+
+# Process NMAP Report
+while read line;
+do
+    # Parse Line
+    HOST_DATA_ARRAY=($line);
+    # Add/Update Records for Active Hosts
+    if [[ "$line" == *"Status: Up"* ]]
+    then
+        HOST_IP=${HOST_DATA_ARRAY[1]};
+        HOST_NAME=${HOST_DATA_ARRAY[2]//[\(\)]/};
+
+	SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT HostID FROM tblHost WHERE HostIP='$HOST_IP';"`;
+
+	if [ -z "$SQL_RESULT" ]
+	then
+	    # Create new host record for new IP
+            SQL_RESULT=`$SQLITE $SQLITE_DB "INSERT INTO tblHost(HostIP, HostName, StateID, HostMonitor, HostLastSeen) VALUES('$HOST_IP', '$HOST_NAME', 1, 0, $DATESTAMP);"`;
+            # Cleanup other instances of same hostname (DHCP cleanup)
+            if [[ "$HOST_NAME" != "" ]]; then  SQL_RESULT=`$SQLITE $SQLITE_DB "DELETE FROM tblHost WHERE HostName='$HOST_NAME' AND HostIP!='$HOST_IP';"`; fi;
+	else
+	    # Update existing hosts records
+            SQL_RESULT=`$SQLITE $SQLITE_DB "UPDATE tblHost SET HostName='$HOST_NAME', StateID=1, HostLastSeen=$DATESTAMP WHERE HostIP='$HOST_IP';"`;
+	fi
+    # Add/Update Records for Inactive Hosts
+    elif [[ "$line" == *"Status: Down"* ]]
+    then
+	HOST_IP=${HOST_DATA_ARRAY[1]};
+    	HOST_NAME=${HOST_DATA_ARRAY[2]//[\(\)]/};
+	SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT HostID FROM tblHost WHERE HostIP='$HOST_IP';"`;
+	if [ -z "$SQL_RESULT" ]
+        then
+            # Catch the edge of an offline host not listed in the database
+            SQL_RESULT=`$SQLITE $SQLITE_DB "INSERT INTO tblHost(HostIP, HostName, StateID, HostMonitor, HostLastSeen) VALUES('$HOST_IP', '$HOST_NAME', 0, 0, 0);"`;
+        else
+            # Update host state for given IP as offline
+            SQL_RESULT=`$SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=0 WHERE HostIP='$HOST_IP';"`;
+	fi
+    # Populate OS/Port Information for discovered hosts
+    else
+	# Ignore NMAP Version Info
+	if [[ "${HOST_DATA_ARRAY[0]}" != "#" ]]
+	then
+            HOST_IP=${HOST_DATA_ARRAY[1]};
+            HOST_NAME=${HOST_DATA_ARRAY[2]//[\(\)]/};
+	    SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT OperSysString FROM tblOperSys;"`;
+            # Get list of operating systems
+	    OS_ARRAY=($SQL_RESULT);
+            # Get OS ID for current host
+	    SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT OperSysID FROM tblHost WHERE HostIP='$HOST_IP';"`;
+            # Attempt to match detected OS against database
+            if [[ "$SQL_RESULT" == "" ]]
+            then
+	        for os in "${OS_ARRAY[@]}"
+	        do
+                    # Check host data for matching OS string
+	            if [[ "${HOST_DATA_ARRAY[@]}" == *"$os"* ]]
+		    then
+                        # Set detected OS ID for host
+		        SQL_RESULT=`$SQLITE $SQLITE_DB "UPDATE tblHost SET OperSysID=(Select OperSysID FROM tblOperSys WHERE OperSysString='$os') WHERE HostIP='$HOST_IP';"`;
+		    fi
+	        done
+            fi
+	fi
+    fi
+done <$NMAP_RPT
+
+# Cleanup NMAP Report Files
+rm $NMAP_RPT;
+
+# Check for Stale Host Entries in the Database and Set the Flag
+STALEDATE=$( expr $DATESTAMP - $DATE_BUFFER );
+SQL_RESULT=`$SQLITE $SQLITE_DB "UPDATE tblHost SET StateID=2 WHERE HostLastSeen<$STALEDATE;"`;

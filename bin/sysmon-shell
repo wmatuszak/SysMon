@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Filename: sysmon-shell
+# Version: Alpha01
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  Command Line Interface Module
+#
+# This module is a basic command line interface for SysMon development.
+#
+
+SCRIPT_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )";
+
+source "$SCRIPT_HOME/../lib/sysmon-common";
+
+
+# MAIN LOOP
+while [ 1 ]
+do
+    # Print Prompt
+    echo -ne "\e[00;31msysmon@$HOSTNAME>>\e[00m ";
+    # Read Command
+    read line;
+
+    # Process Command
+    CMD_ARRAY=($line);
+
+    if [[ "${CMD_ARRAY[0]}" == "print" ]]
+    then
+        if [[ "${CMD_ARRAY[1]}" == "host"  ]]
+	then
+	    $SQLITE $SQLITE_HOST_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblHost";
+	elif [[ "${CMD_ARRAY[1]}" == "cred"  ]]
+        then
+            $SQLITE $SQLITE_DEFAULT_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblCred";
+	elif [[ "${CMD_ARRAY[1]}" == "probe"  ]]
+        then
+            $SQLITE $SQLITE_DEFAULT_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblProbe";
+	elif [[ "${CMD_ARRAY[1]}" == "payload"  ]]
+        then
+            $SQLITE $SQLITE_DEAFAULT_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblPayload";
+	elif [[ "${CMD_ARRAY[1]}" == "os"  ]]
+        then
+            $SQLITE $SQLITE_DEFAULT_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblOperSys";
+ 	elif [[ "${CMD_ARRAY[1]}" == "state"  ]]
+        then
+            $SQLITE $SQLITE_DEFAULT_PRINT_ARGS $SQLITE_DB "SELECT * FROM tblState";
+        fi
+    elif [[ "${CMD_ARRAY[0]}" == "monitor" ]]
+    then
+	$SQLITE $SQLITE_DB "UPDATE tblHost SET HostMonitor=1 WHERE HostName='${CMD_ARRAY[1]}'";
+        SQL_RESULT=`$SQLITE $SQLITE_DB "SELECT OperSysDefaultProbes from tblOperSys WHERE OperSysID=(SELECT OperSysID FROM tblHost WHERE HostName='${CMD_ARRAY[1]}')"`;
+        PROBE_LIST=($SQL_RESULT);
+        # Assign default probes for operating system
+        for CUR_PROBE in "${PROBE_LIST[@]}"
+        do
+            $SQLITE $SQLITE_DB "INSERT INTO tblPayload(HostID, ProbeID) VALUES((SELECT HostID FROM tblHost WHERE HostName='${CMD_ARRAY[1]}'), '$CUR_PROBE')"
+        done
+    elif  [[ "${CMD_ARRAY[0]}" == "unmonitor" ]]
+    then
+        $SQLITE $SQLITE_DB "UPDATE tblHost SET HostMonitor=0 WHERE HostName='${CMD_ARRAY[1]}'";
+        $SQLITE $SQLITE_DB "DELETE FROM tblPayload WHERE HostID=(SELECT HostID FROM tblHost WHERE HostName='${CMD_ARRAY[1]}')";
+    elif  [[ "${CMD_ARRAY[0]}" == "assign" ]]
+    then
+	if [[ "${CMD_ARRAY[1]}" == "cred"  ]]
+        then
+            $SQLITE $SQLITE_DB "UPDATE tblHost SET CredID='${CMD_ARRAY[3]}' WHERE HostName='${CMD_ARRAY[2]}'";
+        elif [[ "${CMD_ARRAY[1]}" == "probe"  ]]
+        then
+            $SQLITE $SQLITE_DB "INSERT INTO tblPayload(HostID, ProbeID) VALUES((SELECT HostID FROM tblHost WHERE HostName='${CMD_ARRAY[2]}'), '${CMD_ARRAY[3]}')";
+	fi
+    elif  [[ "${CMD_ARRAY[0]}" == "unassign" ]]
+    then
+        if [[ "${CMD_ARRAY[1]}" == "cred"  ]]
+        then
+            $SQLITE $SQLITE_DB "UPDATE tblHost SET CredID='' WHERE HostName='${CMD_ARRAY[2]}'";
+        elif [[ "${CMD_ARRAY[1]}" == "probe"  ]]
+        then
+            $SQLITE $SQLITE_DB "DELETE FROM tblPayload WHERE HostID=(SELECT HostID FROM tblHost WHERE HostName='${CMD_ARRAY[2]}') AND ProbeID='${CMD_ARRAY[3]}'";
+        fi
+    elif  [[ "${CMD_ARRAY[0]}" == "new" ]]
+    then
+        if [[ "${CMD_ARRAY[1]}" == "cred"  ]]
+        then
+            $SQLITE $SQLITE_DB "INSERT INTO tblCred(CredUser, CredPass, CredDesc) VALUES('${CMD_ARRAY[2]}', '${CMD_ARRAY[3]}', '${CMD_ARRAY[4]}')";
+        elif [[ "${CMD_ARRAY[1]}" == "probe"  ]]
+        then
+            echo "!!TODO!!";
+        fi
+    elif  [[ "${CMD_ARRAY[0]}" == "exit" ]]
+    then
+	exit;
+    else
+	echo "SysMon Managment Shell";
+	echo "----------------------";
+	echo " print host|cred|probe|payload|os|state : Print contents of a given table from database."
+	echo " monitor|unmonitor <hostname> : Toggle monitor status of detected host."
+	echo " assign|unassign cred|probe <hostname> <credID|probeID> : Assign/Unassign a credential set or probe to a host."
+	echo " new cred|probe <values> : Create a new credential or probe entry."
+	echo " exit : Exit the SysMon Shell"
+    fi
+done

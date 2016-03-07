@@ -1,0 +1,51 @@
+#!/bin/bash
+#
+# Filename: sysmon-common-functions
+# Version: Dev01
+# Author: waltwittman
+#
+# - SysMon Suite -
+# -----------------------
+#  Common Functions
+#
+
+# Network Infomation Parsing Functions
+
+# subnet-to-cidr function - Converts a Subnet Mask to CIDR Notation
+# Arg[0] - Subnet Mask (Required)
+function subnet-to-cidr() {
+    SaveIFS=$IFS
+        IFS=.
+        nbits=0
+    for dec in $1 ; do
+        case $dec in
+            255) let nbits+=8;;
+            254) let nbits+=7;;
+            252) let nbits+=6;;
+            248) let nbits+=5;;
+            240) let nbits+=4;;
+            224) let nbits+=3;;
+            192) let nbits+=2;;
+            128) let nbits+=1;;
+            0);;
+            *) echo "Error: $dec is not recognised"; exit 1
+        esac
+    done
+
+    IFS=$SaveIFS
+    echo "$nbits"
+}
+
+# get-network-address - Converts a Subnet Mask to CIDR Notation
+# arg[0] - IP Address (Required)
+# arg[1] - Subnet Mask (Required)
+function get-network-address() {
+    SaveIFS=$IFS
+    IFS=.
+    typeset -a IParr=($1)
+    typeset -a NMarr=($2)
+
+    IFS=$SaveIFS
+    echo $((${IParr[0]} & ${NMarr[0]})).$((${IParr[1]} & ${NMarr[1]})).$((${IParr[2]} & ${NMarr[2]})).$((${IParr[3]} & ${NMarr[3]}))
+}
+
